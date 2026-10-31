@@ -49,14 +49,15 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
-    ports: ["80:80", "443:443"]
+    # المنفذ 80 مستخدم من مشروع scalper، لذا نستخدم 443 فقط (الشهادة تُصدر عبر TLS-ALPN على 443)
+    ports: ["443:443"]
     environment:
       DOMAIN: ${DOMAIN:-}
     command:
       - sh
       - -c
       - |
-        D="$$DOMAIN"
+        D="$${DOMAIN:-ocr.72-61-18-234.sslip.io}"
         if [ -z "$$D" ]; then
           IP="$$(wget -qO- -T 10 http://api.ipify.org || wget -qO- -T 10 http://ipv4.icanhazip.com)"
           IP="$$(echo "$$IP" | tr -d ' \r\n')"
