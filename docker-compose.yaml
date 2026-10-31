@@ -17,6 +17,10 @@ services:
         RUN apt-get update \
          && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng libglib2.0-0 \
          && rm -rf /var/lib/apt/lists/*
+        # نموذج العربية الأدق (tessdata_best) — يرفع دقة قراءة الأسماء كثيراً
+        ADD https://github.com/tesseract-ocr/tessdata_best/raw/main/ara.traineddata /tmp/ara_best.traineddata
+        RUN d="$$(dirname "$$(find /usr/share -name eng.traineddata | head -1)")" \
+         && mv /tmp/ara_best.traineddata "$$d/ara_best.traineddata" && chmod 644 "$$d/ara_best.traineddata"
         RUN pip install --no-cache-dir "starlette>=0.40,<2" "uvicorn>=0.30" "python-multipart>=0.0.9" "opencv-python-headless>=4.9" "numpy>=1.26" "pytesseract>=0.3.10"
         ADD ${OCR_ZIP_URL:-https://raw.githubusercontent.com/abtkare/loan-ocr/main/loan-ocr.zip} /tmp/src.zip
         RUN python -m zipfile -e /tmp/src.zip /tmp/src \
