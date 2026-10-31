@@ -1,9 +1,8 @@
 # خدمة قراءة البطاقة الوطنية (loan-ocr) — للتشغيل من Hostinger Docker Manager ← Compose from URL
 # لا يحتاج أي ملف آخر على السيرفر: يبني الصورة من loan-ocr.zip الموجود في المستودع نفسه،
-# ويصدر شهادة HTTPS تلقائياً (الكاميرا لا تعمل بدونها).
+# وHTTPS يتولاه nginx المثبت على السيرفر (ocr.72-61-18-234.sslip.io ← 127.0.0.1:8010).
 #
 # متغيرات اختيارية (Environment variables في Docker Manager):
-#   DOMAIN       نطاقك الخاص (مثل ocr.example.com). إن تُرك فارغاً يُستخدم تلقائياً  <IP>.sslip.io
 #   OCR_ZIP_URL  رابط ملف الـzip إن غيّرت اسم المستودع
 #   API_KEY      مفتاح يطلبه الخادم في الترويسة X-API-Key (يُضبط بنفس القيمة في Render: OCR_API_KEY)
 name: loan-ocr
@@ -32,7 +31,8 @@ services:
     # يعيد البناء عند كل «Redeploy» فيلتقط آخر zip مرفوع
     pull_policy: build
     restart: unless-stopped
-    expose: ["8000"]
+    # nginx الموجود على السيرفر يستقبل HTTPS ويمرر الطلبات إلى هذا المنفذ (محلي فقط، غير مكشوف للإنترنت)
+    ports: ["127.0.0.1:8010:8000"]
     environment:
       OCR_WORKERS: ${OCR_WORKERS:-1}
       MAX_UPLOAD_MB: "8"
@@ -45,34 +45,3 @@ services:
       - /tmp:size=64m
     mem_limit: 2g
 
-  # Caddy: HTTPS مجاني تلقائي (Let's Encrypt)
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    # المنفذ 80 مستخدم من مشروع scalper، لذا نستخدم 443 فقط (الشهادة تُصدر عبر TLS-ALPN على 443)
-    ports: ["443:443"]
-    environment:
-      DOMAIN: ${DOMAIN:-}
-    command:
-      - sh
-      - -c
-      - |
-        D="$${DOMAIN:-ocr.72-61-18-234.sslip.io}"
-        if [ -z "$$D" ]; then
-          IP="$$(wget -qO- -T 10 http://api.ipify.org || wget -qO- -T 10 http://ipv4.icanhazip.com)"
-          IP="$$(echo "$$IP" | tr -d ' \r\n')"
-          if ! echo "$$IP" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$$'; then echo "تعذّر معرفة عنوان IP — اضبط المتغير DOMAIN"; sleep 60; exit 1; fi
-          D="$$(echo "$$IP" | tr . -).sslip.io"
-        fi
-        echo "=================================================="
-        echo "  رابط خدمة القراءة:  https://$$D"
-        echo "=================================================="
-        exec caddy reverse-proxy --from "$$D" --to app:8000
-    volumes:
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on: [app]
-
-volumes:
-  caddy_data:
-  caddy_config:
