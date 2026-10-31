@@ -1,0 +1,77 @@
+# خدمة قراءة البطاقة الوطنية (loan-ocr) — للتشغيل من Hostinger Docker Manager ← Compose from URL
+# لا يحتاج أي ملف آخر على السيرفر: يبني الصورة من loan-ocr.zip الموجود في المستودع نفسه،
+# ويصدر شهادة HTTPS تلقائياً (الكاميرا لا تعمل بدونها).
+#
+# متغيرات اختيارية (Environment variables في Docker Manager):
+#   DOMAIN       نطاقك الخاص (مثل ocr.example.com). إن تُرك فارغاً يُستخدم تلقائياً  <IP>.sslip.io
+#   OCR_ZIP_URL  رابط ملف الـzip إن غيّرت اسم المستودع
+#   API_KEY      مفتاح يطلبه الخادم في الترويسة X-API-Key (يُضبط بنفس القيمة في Render: OCR_API_KEY)
+name: loan-ocr
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM python:3.12-slim
+        ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 OMP_THREAD_LIMIT=1 FRONTEND_DIR=/srv/frontend
+        RUN apt-get update \
+         && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng libglib2.0-0 \
+         && rm -rf /var/lib/apt/lists/*
+        RUN pip install --no-cache-dir "starlette>=0.40,<2" "uvicorn>=0.30" "python-multipart>=0.0.9" "opencv-python-headless>=4.9" "numpy>=1.26" "pytesseract>=0.3.10"
+        ADD ${OCR_ZIP_URL:-https://raw.githubusercontent.com/abtkare/loan-ocr/main/loan-ocr.zip} /tmp/src.zip
+        RUN python -m zipfile -e /tmp/src.zip /tmp/src \
+         && pip install --no-cache-dir -r /tmp/src/backend/requirements.txt \
+         && mkdir -p /srv/backend && cp -r /tmp/src/backend/app /srv/backend/app && cp -r /tmp/src/frontend /srv/frontend \
+         && chmod -R a+rX /srv && rm -rf /tmp/src /tmp/src.zip
+        WORKDIR /srv/backend
+        USER nobody
+        EXPOSE 8000
+        HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health')"
+        CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*", "--no-access-log"]
+    # يعيد البناء عند كل «Redeploy» فيلتقط آخر zip مرفوع
+    pull_policy: build
+    restart: unless-stopped
+    expose: ["8000"]
+    environment:
+      OCR_WORKERS: ${OCR_WORKERS:-1}
+      MAX_UPLOAD_MB: "8"
+      RATE_LIMIT_PER_MIN: ${RATE_LIMIT_PER_MIN:-120}
+      API_KEY: ${API_KEY:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://alwah-platform.onrender.com}
+    # الصور تُعالج في الذاكرة فقط: الحاوية للقراءة فقط والمجلد المؤقت في الذاكرة
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    mem_limit: 2g
+
+  # Caddy: HTTPS مجاني تلقائي (Let's Encrypt)
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN:-}
+    command:
+      - sh
+      - -c
+      - |
+        D="$$DOMAIN"
+        if [ -z "$$D" ]; then
+          IP="$$(wget -qO- -T 10 http://api.ipify.org || wget -qO- -T 10 http://ipv4.icanhazip.com)"
+          IP="$$(echo "$$IP" | tr -d ' \r\n')"
+          if ! echo "$$IP" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$$'; then echo "تعذّر معرفة عنوان IP — اضبط المتغير DOMAIN"; sleep 60; exit 1; fi
+          D="$$(echo "$$IP" | tr . -).sslip.io"
+        fi
+        echo "=================================================="
+        echo "  رابط خدمة القراءة:  https://$$D"
+        echo "=================================================="
+        exec caddy reverse-proxy --from "$$D" --to app:8000
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [app]
+
+volumes:
+  caddy_data:
+  caddy_config:
